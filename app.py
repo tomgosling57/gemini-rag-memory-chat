@@ -9,6 +9,18 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch  # Import torch
 
+SYSTEM_PROMPT_FILE = "system_prompt.txt"
+
+def load_system_prompt():
+    if os.path.exists(SYSTEM_PROMPT_FILE):
+        with open(SYSTEM_PROMPT_FILE, "r") as f:
+            return f.read()
+    return ""
+
+def save_system_prompt(prompt):
+    with open(SYSTEM_PROMPT_FILE, "w") as f:
+        f.write(prompt)
+
 # Replace 'YOUR_API_KEY' with your actual Gemini API key
 GEMINI_API_KEY = 'AIzaSyDwYGElMrX9pzSyK9QaccNdEl-W6ul2GGk'
 genai.configure(api_key=GEMINI_API_KEY)
@@ -70,11 +82,16 @@ def retrieve_relevant_messages(query, top_k=5):
     messages = [hit.payload["text"] for hit in search_result]
     return messages
 
-def generate_response(prompt):
-    """Generates a response from the Gemini model, incorporating memory."""
+def generate_response(prompt, system_prompt=""):
+    """Generates a response from the Gemini model, incorporating memory and an optional system prompt."""
     relevant_messages = retrieve_relevant_messages(prompt)
     context = "\n".join(relevant_messages)
-    augmented_prompt = f"Context: {context}\nUser: {prompt}"
+    
+    if system_prompt:
+        augmented_prompt = f"System: {system_prompt}\nContext: {context}\nUser: {prompt}"
+    else:
+        augmented_prompt = f"Context: {context}\nUser: {prompt}"
+        
     try:
         response = model.generate_content(augmented_prompt)
         return response.text
@@ -84,13 +101,24 @@ def generate_response(prompt):
 # Streamlit app
 st.title("Gemini Chatbot with Memory")
 
+# System Prompt input
+st.subheader("System Prompt")
+current_system_prompt = load_system_prompt()
+system_prompt_input = st.text_area("Enter your system prompt here (optional):", value=current_system_prompt, height=100)
+
+if st.button("Save System Prompt"):
+    save_system_prompt(system_prompt_input)
+    st.success("System prompt saved!")
+    current_system_prompt = system_prompt_input # Update current_system_prompt after saving
+
+st.subheader("Chat")
 user_input = st.text_input("Enter your message:")
 
 if st.button("Send"):
     if user_input:
         embedding = generate_embedding(user_input)
         store_message(user_input, embedding)
-        response = generate_response(user_input)
+        response = generate_response(user_input, system_prompt=current_system_prompt)
         st.write("Response:", response)
     else:
         st.write("Please enter a message.")
