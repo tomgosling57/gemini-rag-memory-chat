@@ -1,19 +1,17 @@
-import streamlit as st
 import google.generativeai as genai
 import os
-import time # Import time
+import time
 from qdrant_client import QdrantClient
 from qdrant_client import models
 from qdrant_client.models import VectorParams, Distance, PointStruct
 import numpy as np
 from sentence_transformers import SentenceTransformer
-import torch  # Import torch
-from serpapi import GoogleSearch # Import GoogleSearch
-from dotenv import load_dotenv # Import dotenv
-from gmail_reader import GmailReader # Import GmailReader
-from email_query_processor import EmailQueryProcessor # Import EmailQueryProcessor
+from serpapi import GoogleSearch
+from dotenv import load_dotenv
+from gmail_reader import GmailReader
+from email_query_processor import EmailQueryProcessor
 
-load_dotenv() # Load environment variables from .env file
+load_dotenv()
 
 SYSTEM_PROMPT_FILE = "system_prompt.txt"
 
@@ -27,12 +25,12 @@ def save_system_prompt(prompt):
     with open(SYSTEM_PROMPT_FILE, "w") as f:
         f.write(prompt)
 
-# Replace 'YOUR_API_KEY' with your actual Gemini API key
+# API Keys from .env
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SERPAPI_API_KEY = os.environ.get("SERPAPI_API_KEY")
-QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
-GOOGLE_APP_PASSWORD = os.environ.get("GOOGLE_APP_PASSWORD") # Load Google App Password
-GOOGLE_EMAIL_ADDRESS = os.environ.get("GOOGLE_EMAIL_ADDRESS") # Load Google Email Address
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY") # Load Qdrant API key from .env
+GOOGLE_APP_PASSWORD = os.environ.get("GOOGLE_APP_PASSWORD")
+GOOGLE_EMAIL_ADDRESS = os.environ.get("GOOGLE_EMAIL_ADDRESS")
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash')
@@ -54,7 +52,7 @@ VECTOR_SIZE = 384  # Size of the Sentence Transformer embeddings
 try:
     client.get_collection(collection_name=COLLECTION_NAME)
     print(f"Collection '{COLLECTION_NAME}' already exists.")
-except:
+except Exception: # Catch all exceptions for collection check
     client.create_collection(
         collection_name=COLLECTION_NAME,
         vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
@@ -63,7 +61,7 @@ except:
 
 # Load Sentence Transformer model
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+embedding_model = SentenceTransformer(EMBEDDING_MODEL, device='cpu')
 print(next(embedding_model.parameters()).device)
 
 def generate_embedding(text):
@@ -72,8 +70,8 @@ def generate_embedding(text):
 
 def perform_web_search(query):
     """Performs a web search using SerpAPI and returns formatted results."""
-    if not SERPAPI_API_KEY or SERPAPI_API_KEY == "YOUR_SERPAPI_API_KEY":
-        st.warning("SerpAPI key not set. Web search will not function.")
+    if not SERPAPI_API_KEY:
+        print("SerpAPI key not set. Web search will not function.")
         return "Web search is not configured."
 
     params = {
@@ -104,12 +102,11 @@ def perform_web_search(query):
 
 def should_perform_web_search(query):
     """Determines if a web search is needed based on the query."""
-    # Simple heuristic: trigger search for questions, current events, or specific factual queries
     query_lower = query.lower()
     keywords = [
         "what is", "who is", "when is", "where is", "how to",
         "latest news", "current events", "update on", "recent developments",
-        "today", "this week", "this month", "in 20", # Catches years like "in 2025"
+        "today", "this week", "this month", "in 20",
         "information about", "details on", "explain", "tell me about",
         "events in", "report on", "facts about", "background on"
     ]
@@ -118,7 +115,6 @@ def should_perform_web_search(query):
         if keyword in query_lower:
             return True
     
-    # If the query is short and seems like a factual question, consider searching
     if len(query.split()) < 7 and query.endswith("?"):
         return True
         
@@ -127,7 +123,7 @@ def should_perform_web_search(query):
 def store_message(message, embedding):
     """Stores the message and its embedding in Qdrant."""
     point = PointStruct(
-        id=int(time.time_ns()),  # Generate an integer ID based on nanosecond timestamp
+        id=int(time.time_ns()),
         vector=embedding,
         payload={"text": message},
     )
@@ -136,8 +132,6 @@ def store_message(message, embedding):
 def retrieve_relevant_messages(query, top_k=5):
     """Retrieves relevant messages from Qdrant based on the query."""
     query_embedding = generate_embedding(query)
-    print("Query Embedding (first 10 elements):", query_embedding[:10])  # Print first 10 elements
-    print("Query Embedding Length:", len(query_embedding))  # Print length of the embedding
     search_result = client.search(
         collection_name=COLLECTION_NAME,
         query_vector=query_embedding,
@@ -153,15 +147,11 @@ def generate_response(prompt, system_prompt=""):
     web_search_performed = False
     if should_perform_web_search(prompt):
         web_search_performed = True
-        search_placeholder = st.empty()
-        with st.spinner("Searching the internet..."):
-            web_search_results = perform_web_search(prompt)
-        search_placeholder.empty() # Clear the spinner after search
+        web_search_results = perform_web_search(prompt)
         
     relevant_messages = retrieve_relevant_messages(prompt)
     memory_context = "\n".join(relevant_messages)
     
-    # Combine contexts
     full_context = ""
     if web_search_performed:
         if web_search_results and web_search_results != "No relevant search results found.":
@@ -182,55 +172,71 @@ def generate_response(prompt, system_prompt=""):
     except Exception as e:
         return f"An error occurred: {e}"
 
-# Streamlit app
-st.title("Gemini Chatbot with Memory")
-
-# System Prompt input
-st.subheader("System Prompt")
-current_system_prompt = load_system_prompt()
-system_prompt_input = st.text_area("Enter your system prompt here (optional):", value=current_system_prompt, height=100)
-
-if st.button("Save System Prompt"):
-    save_system_prompt(system_prompt_input)
-    st.success("System prompt saved!")
-    current_system_prompt = system_prompt_input # Update current_system_prompt after saving
-
-st.subheader("Chat")
-user_input = st.text_input("Enter your message:")
-
-if st.button("Send"):
-    if user_input:
-        embedding = generate_embedding(user_input)
-        store_message(user_input, embedding)
-        response = generate_response(user_input, system_prompt=current_system_prompt)
-        st.write("Response:", response)
-    else:
-        st.write("Please enter a message.")
-
-st.subheader("Gmail Reader")
-
-if 'show_gmail_reader' not in st.session_state:
-    st.session_state.show_gmail_reader = False
-
-if st.button("Enable Gmail Reading"):
-    st.session_state.show_gmail_reader = not st.session_state.show_gmail_reader
-
-if st.session_state.show_gmail_reader:
-    if not GOOGLE_EMAIL_ADDRESS or not GOOGLE_APP_PASSWORD:
-        st.warning("Gmail email address or app password not set in .env. Cannot initialize Gmail Reader.")
-    else:
-        gmail_reader = GmailReader(GOOGLE_EMAIL_ADDRESS, GOOGLE_APP_PASSWORD)
-        if not gmail_reader.mail:
-            st.error("Gmail Reader could not be initialized. Please check your email address and app password.")
-        else:
-            email_processor = EmailQueryProcessor(gmail_reader)
-            st.write("Enter your email query:")
-            user_email_query = st.text_input("Email Query:")
-            if st.button("Process Email Query"):
-                if user_email_query:
-                    with st.spinner("Processing your email query..."):
-                        processed_results = email_processor.process_email_query(user_email_query, model)
-                    st.subheader("Email Query Results")
-                    st.write(processed_results)
+def main():
+    print("Gemini Chatbot with Memory (Command Line)")
+    
+    current_system_prompt = load_system_prompt()
+    
+    while True:
+        print("\nMenu:")
+        print("1. Chat with Gemini")
+        print("2. View/Update System Prompt")
+        print("3. Use Gmail Reader")
+        print("4. Exit")
+        
+        choice = input("Enter your choice (1, 2, 3, or 4): ")
+        
+        if choice == '1':
+            print("\nEntering chat mode.")
+            while True:
+                user_input = input("Enter your message (type 'exit' to escape): ")
+                if user_input.lower() == 'exit':
+                    break
+                
+                if user_input:
+                    embedding = generate_embedding(user_input)
+                    store_message(user_input, embedding)
+                    response = generate_response(user_input, system_prompt=current_system_prompt)
+                    print("Gemini:", response)
                 else:
-                    st.write("Please enter an email query.")
+                    print("Please enter a message.")
+        elif choice == '2':
+            print(f"\nCurrent System Prompt:\n{current_system_prompt}")
+            new_system_prompt = input("Enter new system prompt (leave blank to keep current): ")
+            if new_system_prompt:
+                save_system_prompt(new_system_prompt)
+                current_system_prompt = new_system_prompt
+                print("System prompt updated!")
+            else:
+                print("System prompt not changed.")
+        elif choice == '3':
+            print("\n--- Gmail Reader ---")
+            if not GOOGLE_EMAIL_ADDRESS or not GOOGLE_APP_PASSWORD:
+                print("Gmail email address or app password not set in .env. Cannot initialize Gmail Reader.")
+                continue
+            gmail_reader = GmailReader(GOOGLE_EMAIL_ADDRESS, GOOGLE_APP_PASSWORD)
+            if not gmail_reader.mail:
+                print("Gmail Reader could not be initialized. Please check your email address and app password.")
+                continue
+
+            email_processor = EmailQueryProcessor(gmail_reader)
+            print("\nEntering Gmail Query mode.")
+            while True:
+                user_email_query = input("Enter your email query (type 'exit' to escape): ")
+                if user_email_query.lower() == 'exit':
+                    break
+                
+                if user_email_query:
+                    print("Processing your email query...")
+                    processed_results = email_processor.process_email_query(user_email_query, model)
+                    print("\n--- Email Query Results ---")
+                    print(processed_results)
+                else:
+                    print("Please enter an email query.")
+        elif choice == '4':
+            break
+        else:
+            print("Invalid choice. Please enter 1, 2, 3, or 4.")
+
+if __name__ == "__main__":
+    main()
