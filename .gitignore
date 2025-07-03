@@ -1,3 +1,5 @@
 memory-bank/*
 __pycache__/*
 memory-bank/
+.env
+venv/
