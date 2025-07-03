@@ -8,7 +8,7 @@ from qdrant_client.models import VectorParams, Distance, PointStruct
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch  # Import torch
-from serpapi import GoogleSearch # Import GoogleSearch
+from serpapi.google_search import GoogleSearch
 from dotenv import load_dotenv # Import dotenv
 from gmail_reader import GmailReader # Import GmailReader
 from email_query_processor import EmailQueryProcessor # Import EmailQueryProcessor
